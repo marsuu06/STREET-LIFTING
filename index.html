@@ -460,96 +460,133 @@ function ExerciseCard({ exercise, data, onChange, accentColor }) {
 
 // Session Screen
 function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSelectedSession }) {
-  const [sessionData, setSessionData] = useState({});
-  const [sessionTime, setSessionTime] = useState(0);
-  const [timerActive, setTimerActive] = useState(false);
-  const [difficulty, setDifficulty] = useState(3);
-  const [sessionNotes, setSessionNotes] = useState('');
+  // Clé unique pour ce draft dans localStorage
+  const draftKey = selectedSession ? `fitness_draft_${profile.id}_${selectedSession}` : null;
+  const timerRunningKey = selectedSession ? `fitness_timer_running_${profile.id}_${selectedSession}` : null;
+  const timerStartKey = selectedSession ? `fitness_timer_start_${profile.id}_${selectedSession}` : null;
+
+  // Initialisation directement depuis localStorage pour survivre aux actualisations
+  const initState = () => {
+    if (!selectedSession) return { exercises: {}, duration: 0, difficulty: 3, notes: '', completed: false };
+    // 1. Lire le draft direct
+    const draft = getStorage(`fitness_draft_${profile.id}_${selectedSession}`, null);
+    // 2. Lire les données de la semaine en fallback
+    const weekSaved = getStorage(`fitness_${profile.id}_week_${getWeekKey()}`, {});
+    const existing = draft || weekSaved?.[selectedSession] || {};
+    return {
+      exercises: existing.exercises || {},
+      duration: existing.duration || 0,
+      difficulty: existing.difficulty || 3,
+      notes: existing.notes || '',
+      completed: existing.completed || false,
+    };
+  };
+
+  const init = initState();
+  const [sessionData, setSessionData] = useState(init.exercises);
+  const [sessionTime, setSessionTime] = useState(() => {
+    if (!selectedSession) return 0;
+    // Si le timer tournait, calculer le temps écoulé depuis le départ
+    const wasRunning = getStorage(`fitness_timer_running_${profile.id}_${selectedSession}`, false);
+    const startedAt = getStorage(`fitness_timer_start_${profile.id}_${selectedSession}`, null);
+    const savedTime = init.duration || 0;
+    if (wasRunning && startedAt) {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      return savedTime + elapsed;
+    }
+    return savedTime;
+  });
+  const [timerActive, setTimerActive] = useState(() => {
+    if (!selectedSession) return false;
+    return getStorage(`fitness_timer_running_${profile.id}_${selectedSession}`, false);
+  });
+  const [difficulty, setDifficulty] = useState(init.difficulty);
+  const [sessionNotes, setSessionNotes] = useState(init.notes);
   const [saved, setSaved] = useState(false);
   const [autoSaveFlash, setAutoSaveFlash] = useState(false);
   const timerRef = useRef(null);
   const autoSaveRef = useRef(null);
-  const isFirstMount = useRef(true);
+  const debounceRef = useRef(null);
 
-  // Load existing draft on mount
-  useEffect(() => {
-    if (!selectedSession) return;
-    // Priority: existing week data (completed or draft)
-    const existing = weekData?.[selectedSession];
-    if (existing) {
-      setSessionData(existing.exercises || {});
-      setSessionTime(existing.duration || 0);
-      setDifficulty(existing.difficulty || 3);
-      setSessionNotes(existing.notes || '');
-    } else {
-      // Try to load a draft from localStorage directly
-      const draft = getStorage(`fitness_draft_${profile.id}_${selectedSession}`, null);
-      if (draft) {
-        setSessionData(draft.exercises || {});
-        setSessionTime(draft.duration || 0);
-        setDifficulty(draft.difficulty || 3);
-        setSessionNotes(draft.notes || '');
-      }
-    }
-    isFirstMount.current = false;
-  }, [selectedSession]);
+  // Refs pour accéder aux valeurs courantes dans les callbacks sans re-créer
+  const sessionDataRef = useRef(sessionData);
+  const sessionTimeRef = useRef(sessionTime);
+  const difficultyRef = useRef(difficulty);
+  const sessionNotesRef = useRef(sessionNotes);
+  useEffect(() => { sessionDataRef.current = sessionData; }, [sessionData]);
+  useEffect(() => { sessionTimeRef.current = sessionTime; }, [sessionTime]);
+  useEffect(() => { difficultyRef.current = difficulty; }, [difficulty]);
+  useEffect(() => { sessionNotesRef.current = sessionNotes; }, [sessionNotes]);
 
-  // Auto-save every time sessionData / difficulty / sessionNotes changes
-  const autoSave = useCallback((exData, diff, notes, time) => {
+  // Fonction de sauvegarde directe (pas de debounce)
+  const persistNow = useCallback((exData, diff, notes, time) => {
     if (!selectedSession || !profile) return;
-    const draft = { exercises: exData, difficulty: diff, notes, duration: time, completed: weekData?.[selectedSession]?.completed || false, date: weekData?.[selectedSession]?.date || new Date().toISOString() };
-    // Save as draft key (always, even mid-session)
-    setStorage(`fitness_draft_${profile.id}_${selectedSession}`, draft);
-    // Also update the weekData so it persists across tab switches
-    const newWeek = { ...(weekData || {}), [selectedSession]: draft };
+    const wk = getWeekKey();
+    const existing = getStorage(`fitness_${profile.id}_week_${wk}`, {});
+    const entry = { exercises: exData, difficulty: diff, notes, duration: time, completed: existing?.[selectedSession]?.completed || false, date: existing?.[selectedSession]?.date || new Date().toISOString() };
+    // Draft rapide
+    setStorage(`fitness_draft_${profile.id}_${selectedSession}`, entry);
+    // Semaine complète
+    const newWeek = { ...existing, [selectedSession]: entry };
+    setStorage(`fitness_${profile.id}_week_${wk}`, newWeek);
     setWeekData(newWeek);
-    setStorage(`fitness_${profile.id}_week_${getWeekKey()}`, newWeek);
-    // Flash indicator
+    // Flash
     setAutoSaveFlash(true);
     clearTimeout(autoSaveRef.current);
     autoSaveRef.current = setTimeout(() => setAutoSaveFlash(false), 1200);
-  }, [selectedSession, profile, weekData, setWeekData]);
+  }, [selectedSession, profile, setWeekData]);
 
-  // Debounced auto-save when data changes
-  const debounceRef = useRef(null);
+  // Debounce pour les frappes clavier
   const triggerAutoSave = useCallback((exData, diff, notes, time) => {
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => autoSave(exData, diff, notes, time), 600);
-  }, [autoSave]);
+    debounceRef.current = setTimeout(() => persistNow(exData, diff, notes, time), 400);
+  }, [persistNow]);
 
+  // Handlers
   const handleExerciseChange = useCallback((exId, val) => {
     setSessionData(prev => {
       const next = { ...prev, [exId]: val };
-      triggerAutoSave(next, difficulty, sessionNotes, sessionTime);
+      triggerAutoSave(next, difficultyRef.current, sessionNotesRef.current, sessionTimeRef.current);
       return next;
     });
-  }, [difficulty, sessionNotes, sessionTime, triggerAutoSave]);
+  }, [triggerAutoSave]);
 
   const handleDifficultyChange = useCallback((d) => {
     setDifficulty(d);
-    triggerAutoSave(sessionData, d, sessionNotes, sessionTime);
-  }, [sessionData, sessionNotes, sessionTime, triggerAutoSave]);
+    triggerAutoSave(sessionDataRef.current, d, sessionNotesRef.current, sessionTimeRef.current);
+  }, [triggerAutoSave]);
 
   const handleNotesChange = useCallback((n) => {
     setSessionNotes(n);
-    triggerAutoSave(sessionData, difficulty, n, sessionTime);
-  }, [sessionData, difficulty, sessionTime, triggerAutoSave]);
+    triggerAutoSave(sessionDataRef.current, difficultyRef.current, n, sessionTimeRef.current);
+  }, [triggerAutoSave]);
 
+  // Timer — sauvegarde chaque seconde dans localStorage
   useEffect(() => {
     if (timerActive) {
+      // Mémoriser le moment de départ dans localStorage
+      setStorage(`fitness_timer_running_${profile.id}_${selectedSession}`, true);
+      setStorage(`fitness_timer_start_${profile.id}_${selectedSession}`, Date.now() - sessionTimeRef.current * 1000);
       timerRef.current = setInterval(() => {
         setSessionTime(t => {
           const next = t + 1;
-          // Save time every 30s
-          if (next % 30 === 0) triggerAutoSave(sessionData, difficulty, sessionNotes, next);
+          // Sauvegarder le temps dans localStorage chaque seconde
+          setStorage(`fitness_timer_start_${profile.id}_${selectedSession}`, Date.now() - next * 1000);
+          // Persister les données complètes toutes les 10s
+          if (next % 10 === 0) persistNow(sessionDataRef.current, difficultyRef.current, sessionNotesRef.current, next);
           return next;
         });
       }, 1000);
     } else {
       clearInterval(timerRef.current);
+      if (selectedSession) {
+        setStorage(`fitness_timer_running_${profile.id}_${selectedSession}`, false);
+        // Sauvegarder le temps actuel quand on pause
+        persistNow(sessionDataRef.current, difficultyRef.current, sessionNotesRef.current, sessionTimeRef.current);
+      }
     }
     return () => clearInterval(timerRef.current);
-  }, [timerActive, sessionData, difficulty, sessionNotes]);
+  }, [timerActive]);
 
   if (!selectedSession) {
     return (
@@ -582,11 +619,16 @@ function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSel
   const formatTime = s => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
 
   const saveSession = () => {
-    const newWeek = { ...(weekData || {}), [selectedSession]: { completed: true, exercises: sessionData, duration: sessionTime, difficulty, notes: sessionNotes, date: new Date().toISOString() } };
+    const wk = getWeekKey();
+    const existing = getStorage(`fitness_${profile.id}_week_${wk}`, {});
+    const newWeek = { ...existing, [selectedSession]: { completed: true, exercises: sessionData, duration: sessionTime, difficulty, notes: sessionNotes, date: existing?.[selectedSession]?.date || new Date().toISOString() } };
     setWeekData(newWeek);
-    setStorage(`fitness_${profile.id}_week_${getWeekKey()}`, newWeek);
-    // Clean up draft
+    setStorage(`fitness_${profile.id}_week_${wk}`, newWeek);
+    // Nettoyer draft et timer
     setStorage(`fitness_draft_${profile.id}_${selectedSession}`, null);
+    setStorage(`fitness_timer_running_${profile.id}_${selectedSession}`, false);
+    setStorage(`fitness_timer_start_${profile.id}_${selectedSession}`, null);
+    setTimerActive(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
@@ -916,21 +958,23 @@ function CoachScreen({ profile, weekData, allHistory }) {
 // ==================== MAIN APP ====================
 function App() {
   const [profile, setProfile] = useState(() => getStorage('fitness_profile', null));
-  const [activeTab, setActiveTab] = useState('home');
-  const [selectedSession, setSelectedSession] = useState(null);
+  const [activeTab, setActiveTab] = useState(() => getStorage('fitness_active_tab', 'home'));
+  const [selectedSession, setSelectedSession] = useState(() => getStorage('fitness_selected_session', null));
   const weekKey = getWeekKey();
 
   const [weekData, setWeekDataState] = useState(() => {
-    if (!profile) return {};
-    return getStorage(`fitness_${profile?.id}_week_${weekKey}`, {});
+    const p = getStorage('fitness_profile', null);
+    if (!p) return {};
+    return getStorage(`fitness_${p.id}_week_${weekKey}`, {});
   });
 
   const [allHistory, setAllHistory] = useState(() => {
-    if (!profile) return {};
+    const p = getStorage('fitness_profile', null);
+    if (!p) return {};
     const hist = {};
     try {
       Object.keys(localStorage).forEach(k => {
-        if (k.startsWith(`fitness_${profile?.id}_week_`)) {
+        if (k.startsWith(`fitness_${p.id}_week_`)) {
           hist[k] = JSON.parse(localStorage.getItem(k));
         }
       });
@@ -955,11 +999,29 @@ function App() {
       });
     } catch {}
     setAllHistory(hist);
+    setStorage('fitness_active_tab', 'home');
+    setStorage('fitness_selected_session', null);
   };
 
   const handleStartSession = (sessionKey) => {
     setSelectedSession(sessionKey);
+    setStorage('fitness_selected_session', sessionKey);
     setActiveTab('session');
+    setStorage('fitness_active_tab', 'session');
+  };
+
+  const handleTabChange = (t) => {
+    setActiveTab(t);
+    setStorage('fitness_active_tab', t);
+    if (t !== 'session') {
+      setSelectedSession(null);
+      setStorage('fitness_selected_session', null);
+    }
+  };
+
+  const handleSetSelectedSession = (s) => {
+    setSelectedSession(s);
+    setStorage('fitness_selected_session', s);
   };
 
   if (!profile) return <ProfileSelect onSelect={handleSelectProfile} />;
@@ -967,7 +1029,7 @@ function App() {
   const renderScreen = () => {
     switch (activeTab) {
       case 'home': return <HomeScreen profile={profile} weekData={weekData} onStartSession={handleStartSession} weekKey={weekKey} />;
-      case 'session': return <SessionScreen profile={profile} weekData={weekData} setWeekData={setWeekData} selectedSession={selectedSession} setSelectedSession={setSelectedSession} />;
+      case 'session': return <SessionScreen profile={profile} weekData={weekData} setWeekData={setWeekData} selectedSession={selectedSession} setSelectedSession={handleSetSelectedSession} />;
       case 'progress': return <ProgressScreen profile={profile} allHistory={allHistory} />;
       case 'coach': return <CoachScreen profile={profile} weekData={weekData} allHistory={allHistory} />;
       default: return null;
@@ -987,7 +1049,7 @@ function App() {
       <div style={{ overflowY: 'auto', height: 'calc(100vh - 57px)' }}>
         {renderScreen()}
       </div>
-      <BottomNav active={activeTab} onChange={(t) => { setActiveTab(t); if (t !== 'session') setSelectedSession(null); }} />
+      <BottomNav active={activeTab} onChange={handleTabChange} />
     </div>
   );
 }
