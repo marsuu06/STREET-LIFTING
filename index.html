@@ -466,25 +466,90 @@ function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSel
   const [difficulty, setDifficulty] = useState(3);
   const [sessionNotes, setSessionNotes] = useState('');
   const [saved, setSaved] = useState(false);
+  const [autoSaveFlash, setAutoSaveFlash] = useState(false);
   const timerRef = useRef(null);
+  const autoSaveRef = useRef(null);
+  const isFirstMount = useRef(true);
 
+  // Load existing draft on mount
   useEffect(() => {
-    if (!selectedSession || !weekData?.[selectedSession]) return;
-    const d = weekData[selectedSession];
-    setSessionData(d.exercises || {});
-    setSessionTime(d.duration || 0);
-    setDifficulty(d.difficulty || 3);
-    setSessionNotes(d.notes || '');
+    if (!selectedSession) return;
+    // Priority: existing week data (completed or draft)
+    const existing = weekData?.[selectedSession];
+    if (existing) {
+      setSessionData(existing.exercises || {});
+      setSessionTime(existing.duration || 0);
+      setDifficulty(existing.difficulty || 3);
+      setSessionNotes(existing.notes || '');
+    } else {
+      // Try to load a draft from localStorage directly
+      const draft = getStorage(`fitness_draft_${profile.id}_${selectedSession}`, null);
+      if (draft) {
+        setSessionData(draft.exercises || {});
+        setSessionTime(draft.duration || 0);
+        setDifficulty(draft.difficulty || 3);
+        setSessionNotes(draft.notes || '');
+      }
+    }
+    isFirstMount.current = false;
   }, [selectedSession]);
+
+  // Auto-save every time sessionData / difficulty / sessionNotes changes
+  const autoSave = useCallback((exData, diff, notes, time) => {
+    if (!selectedSession || !profile) return;
+    const draft = { exercises: exData, difficulty: diff, notes, duration: time, completed: weekData?.[selectedSession]?.completed || false, date: weekData?.[selectedSession]?.date || new Date().toISOString() };
+    // Save as draft key (always, even mid-session)
+    setStorage(`fitness_draft_${profile.id}_${selectedSession}`, draft);
+    // Also update the weekData so it persists across tab switches
+    const newWeek = { ...(weekData || {}), [selectedSession]: draft };
+    setWeekData(newWeek);
+    setStorage(`fitness_${profile.id}_week_${getWeekKey()}`, newWeek);
+    // Flash indicator
+    setAutoSaveFlash(true);
+    clearTimeout(autoSaveRef.current);
+    autoSaveRef.current = setTimeout(() => setAutoSaveFlash(false), 1200);
+  }, [selectedSession, profile, weekData, setWeekData]);
+
+  // Debounced auto-save when data changes
+  const debounceRef = useRef(null);
+  const triggerAutoSave = useCallback((exData, diff, notes, time) => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => autoSave(exData, diff, notes, time), 600);
+  }, [autoSave]);
+
+  const handleExerciseChange = useCallback((exId, val) => {
+    setSessionData(prev => {
+      const next = { ...prev, [exId]: val };
+      triggerAutoSave(next, difficulty, sessionNotes, sessionTime);
+      return next;
+    });
+  }, [difficulty, sessionNotes, sessionTime, triggerAutoSave]);
+
+  const handleDifficultyChange = useCallback((d) => {
+    setDifficulty(d);
+    triggerAutoSave(sessionData, d, sessionNotes, sessionTime);
+  }, [sessionData, sessionNotes, sessionTime, triggerAutoSave]);
+
+  const handleNotesChange = useCallback((n) => {
+    setSessionNotes(n);
+    triggerAutoSave(sessionData, difficulty, n, sessionTime);
+  }, [sessionData, difficulty, sessionTime, triggerAutoSave]);
 
   useEffect(() => {
     if (timerActive) {
-      timerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000);
+      timerRef.current = setInterval(() => {
+        setSessionTime(t => {
+          const next = t + 1;
+          // Save time every 30s
+          if (next % 30 === 0) triggerAutoSave(sessionData, difficulty, sessionNotes, next);
+          return next;
+        });
+      }, 1000);
     } else {
       clearInterval(timerRef.current);
     }
     return () => clearInterval(timerRef.current);
-  }, [timerActive]);
+  }, [timerActive, sessionData, difficulty, sessionNotes]);
 
   if (!selectedSession) {
     return (
@@ -520,6 +585,8 @@ function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSel
     const newWeek = { ...(weekData || {}), [selectedSession]: { completed: true, exercises: sessionData, duration: sessionTime, difficulty, notes: sessionNotes, date: new Date().toISOString() } };
     setWeekData(newWeek);
     setStorage(`fitness_${profile.id}_week_${getWeekKey()}`, newWeek);
+    // Clean up draft
+    setStorage(`fitness_draft_${profile.id}_${selectedSession}`, null);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
@@ -530,9 +597,12 @@ function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSel
       <div style={{ background: `linear-gradient(180deg, ${prog.color}18 0%, transparent 100%)`, padding: '20px 16px 16px', position: 'sticky', top: 0, zIndex: 10, backdropFilter: 'blur(10px)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
           <button onClick={() => setSelectedSession(null)} style={{ background: 'var(--surface2)', border: 'none', borderRadius: '10px', padding: '8px 12px', color: 'var(--muted)', cursor: 'pointer', fontSize: '14px' }}>← Retour</button>
-          <div>
+          <div style={{ flex: 1 }}>
             <h2 style={{ fontFamily: 'Bebas Neue', fontSize: '26px', color: prog.color, letterSpacing: '2px', lineHeight: 1 }}>{prog.icon} {prog.name}</h2>
             <p style={{ fontSize: '11px', color: 'var(--muted)' }}>{completedCount}/{allExercises.length} exercices · {prog.day}</p>
+          </div>
+          <div style={{ fontSize: '11px', color: autoSaveFlash ? 'var(--green)' : 'transparent', transition: 'color 0.3s', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span>✓</span><span>Sauvegardé</span>
           </div>
         </div>
         {/* Timer row */}
@@ -556,7 +626,7 @@ function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSel
           <div key={group.name} style={{ marginBottom: '24px' }}>
             <h3 style={{ fontSize: '11px', letterSpacing: '3px', color: prog.color, textTransform: 'uppercase', marginBottom: '12px', paddingLeft: '4px' }}>{group.name}</h3>
             {group.exercises.map(ex => (
-              <ExerciseCard key={ex.id} exercise={ex} accentColor={prog.color} data={sessionData[ex.id]} onChange={val => setSessionData(prev => ({ ...prev, [ex.id]: val }))} />
+              <ExerciseCard key={ex.id} exercise={ex} accentColor={prog.color} data={sessionData[ex.id]} onChange={val => handleExerciseChange(ex.id, val)} />
             ))}
           </div>
         ))}
@@ -564,7 +634,7 @@ function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSel
         {/* Session Notes */}
         <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '16px' }}>
           <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '10px', color: 'var(--muted)', letterSpacing: '1px' }}>NOTES DE SÉANCE</h3>
-          <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)} placeholder="Comment s'est passée la séance ? Douleurs, observations..." style={{ width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px', color: 'var(--text)', fontSize: '13px', outline: 'none', resize: 'none', minHeight: '80px', lineHeight: '1.5' }} />
+          <textarea value={sessionNotes} onChange={e => handleNotesChange(e.target.value)} placeholder="Comment s'est passée la séance ? Douleurs, observations..." style={{ width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px', color: 'var(--text)', fontSize: '13px', outline: 'none', resize: 'none', minHeight: '80px', lineHeight: '1.5' }} />
         </div>
 
         {/* Difficulty */}
@@ -572,7 +642,7 @@ function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSel
           <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px', color: 'var(--muted)', letterSpacing: '1px' }}>DIFFICULTÉ RESSENTIE</h3>
           <div style={{ display: 'flex', gap: '8px' }}>
             {[1,2,3,4,5].map(d => (
-              <button key={d} onClick={() => setDifficulty(d)} style={{ flex: 1, background: difficulty >= d ? prog.color : 'var(--surface2)', border: 'none', borderRadius: '10px', padding: '12px 0', cursor: 'pointer', fontSize: '14px', fontWeight: '700', color: difficulty >= d ? '#000' : 'var(--muted)', transition: 'all 0.2s' }}>{d}</button>
+              <button key={d} onClick={() => handleDifficultyChange(d)} style={{ flex: 1, background: difficulty >= d ? prog.color : 'var(--surface2)', border: 'none', borderRadius: '10px', padding: '12px 0', cursor: 'pointer', fontSize: '14px', fontWeight: '700', color: difficulty >= d ? '#000' : 'var(--muted)', transition: 'all 0.2s' }}>{d}</button>
             ))}
           </div>
           <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '8px', textAlign: 'center' }}>
