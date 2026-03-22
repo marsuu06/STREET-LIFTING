@@ -1,1 +1,928 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Street Lifting Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --surface: #111114;
+    --surface2: #18181d;
+    --surface3: #1e1e26;
+    --border: rgba(255,255,255,0.07);
+    --text: #f0f0f5;
+    --muted: #6b6b80;
+    --accent: #c8ff00;
+    --accent2: #ff6b35;
+    --accent3: #00d4ff;
+    --green: #22c55e;
+    --red: #ef4444;
+    --orange: #f97316;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; overflow-x: hidden; }
+  #root { height: 100%; }
 
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 2px; }
+
+  /* Animations */
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+  @keyframes glow { 0%,100% { box-shadow: 0 0 20px rgba(200,255,0,0.2); } 50% { box-shadow: 0 0 40px rgba(200,255,0,0.4); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes popIn { 0% { transform: scale(0.8); opacity:0; } 100% { transform: scale(1); opacity:1; } }
+
+  .fade-in { animation: fadeIn 0.4s ease forwards; }
+  .slide-up { animation: slideUp 0.5s ease forwards; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ==================== DATA ====================
+const PROGRAM = {
+  street: {
+    name: "Street Lifting",
+    day: "Lundi",
+    icon: "🏗️",
+    color: "#c8ff00",
+    groups: [
+      {
+        name: "TRACTIONS",
+        exercises: [
+          { id: "traction_pro", name: "Traction pronation large", muscles: "Grand dorsal · Biceps", sets: 4, repsRange: "max", rir: "2-3", tempo: "Excentrique 3 sec", note: "Amplitude complète : bras tendus en bas, menton au-dessus" },
+          { id: "chin_up", name: "Traction supination (chin-up)", muscles: "Grand dorsal · Biceps++", sets: 3, repsRange: "max", rir: "2", tempo: "", note: "Prise supination, mains à largeur d'épaules" },
+          { id: "australian", name: "Australian pull-up", muscles: "Rhomboïdes · Trapèzes", sets: 3, repsRange: "max", rir: "1", tempo: "", note: "Corps incliné, pieds au sol. Régression si tractions difficiles" },
+        ]
+      },
+      {
+        name: "DIPS",
+        exercises: [
+          { id: "dips_pec", name: "Dips parallèles (buste penché)", muscles: "Pectoraux · Triceps", sets: 4, repsRange: "max", rir: "2", tempo: "", note: "Buste incliné ~15-20° pour cibler les pec. Descendre à 90°" },
+          { id: "dips_tri", name: "Dips triceps (buste droit)", muscles: "Triceps · Deltoïde ant.", sets: 3, repsRange: "max", rir: "2", tempo: "", note: "Torse vertical, coudes serrés" },
+        ]
+      },
+      {
+        name: "POMPES",
+        exercises: [
+          { id: "pompes_large", name: "Pompes larges", muscles: "Pec median · Deltoïde ant.", sets: 3, repsRange: "max", rir: "1", tempo: "Excentrique 3 sec", note: "Mains à 1,5x la largeur des épaules" },
+          { id: "pompes_archer", name: "Pompes archer (unilatéral)", muscles: "Pec unilatéral", sets: 3, repsRange: "max/côté", rir: "2", tempo: "", note: "Un bras fléchi, l'autre tendu. Prépare au lest futur" },
+        ]
+      }
+    ]
+  },
+  push: {
+    name: "Push",
+    day: "Mardi",
+    icon: "💪",
+    color: "#ff6b35",
+    groups: [
+      {
+        name: "PECTORAUX",
+        exercises: [
+          { id: "dev_incline", name: "Développé incliné haltères", muscles: "Pec haut · Pec median", sets: 4, repsRange: "8-12", rir: "2", tempo: "", note: "Angle 30°. Amplitude complète en bas pour étirer le pec" },
+          { id: "fly_cable", name: "Fly câble bas (crossover montant)", muscles: "Pec bas · Pec median", sets: 3, repsRange: "12-15", rir: "1", tempo: "", note: "Poulie basse, croisement vers le haut" },
+        ]
+      },
+      {
+        name: "ÉPAULES",
+        exercises: [
+          { id: "dev_mili", name: "Développé militaire haltères assis", muscles: "Deltoïde ant. · med.", sets: 4, repsRange: "8-12", rir: "2", tempo: "", note: "Descendre jusqu'à la hauteur des oreilles" },
+          { id: "elev_lat", name: "Élévations latérales haltères (inclinées)", muscles: "Deltoïde med.", sets: 4, repsRange: "15-20", rir: "1", tempo: "", note: "Penché 10-15° en avant. Technique stricte" },
+        ]
+      },
+      {
+        name: "TRICEPS",
+        exercises: [
+          { id: "skull_crusher", name: "Skull crusher barre EZ", muscles: "Chef long · Chef lat.", sets: 3, repsRange: "10-12", rir: "2", tempo: "Excentrique 2 sec", note: "Couché, descendre vers le front" },
+          { id: "pushdown", name: "Pushdown poulie haute corde", muscles: "Chef medial", sets: 3, repsRange: "12-15", rir: "1", tempo: "", note: "Écarter la corde en bas pour contraction maximale" },
+        ]
+      }
+    ]
+  },
+  pull: {
+    name: "Pull",
+    day: "Jeudi",
+    icon: "🔗",
+    color: "#00d4ff",
+    groups: [
+      {
+        name: "DOS",
+        exercises: [
+          { id: "rowing_barre", name: "Rowing barre penché", muscles: "Grand dorsal · Trapèzes", sets: 4, repsRange: "6-10", rir: "2", tempo: "Excentrique 2 sec", note: "Torse à 45°, tirer vers le nombril. Pas de triche" },
+          { id: "lat_pull_v", name: "Lat pulldown prise neutre (V-bar)", muscles: "Grand dorsal · Grand rond", sets: 4, repsRange: "8-12", rir: "2", tempo: "", note: "Coudes tirés vers les hanches. Amplitude complète" },
+          { id: "pullover", name: "Pullover poulie haute bras tendus", muscles: "Grand dorsal", sets: 3, repsRange: "12-15", rir: "2", tempo: "", note: "Debout, bras tendus, descendre vers les cuisses" },
+        ]
+      },
+      {
+        name: "BICEPS",
+        exercises: [
+          { id: "curl_incline", name: "Curl incliné haltères", muscles: "Chef long · Stretch max", sets: 3, repsRange: "10-12", rir: "2", tempo: "", note: "Banc à 45°, bras en arrière. Étirement maximal" },
+          { id: "curl_marteau", name: "Curl marteau câble (bras en avant)", muscles: "Brachial · Brachio-radial", sets: 3, repsRange: "12-15", rir: "2", tempo: "", note: "Poulie basse, bras légèrement en avant" },
+        ]
+      },
+      {
+        name: "DELTOÏDE POST.",
+        exercises: [
+          { id: "face_pull", name: "Face pull corde poulie haute", muscles: "Deltoïde post. · Trapèzes inf.", sets: 3, repsRange: "15-20", rir: "1", tempo: "", note: "Tirer vers le visage en ouvrant les coudes. Indispensable" },
+        ]
+      }
+    ]
+  },
+  legs: {
+    name: "Legs",
+    day: "Vendredi",
+    icon: "🦵",
+    color: "#a855f7",
+    groups: [
+      {
+        name: "QUADRICEPS & FESSIERS",
+        exercises: [
+          { id: "squat", name: "Squat barre (back squat)", muscles: "Quadriceps · Fessiers · Ischios", sets: 4, repsRange: "6-10", rir: "2", tempo: "", note: "Descente sous le parallèle. Genoux dans l'axe des orteils" },
+          { id: "rdl", name: "Romanian Deadlift haltères (RDL)", muscles: "Ischios · Fessiers", sets: 4, repsRange: "8-12", rir: "2", tempo: "", note: "Genoux légèrement fléchis. Charge les ischios en étirement" },
+          { id: "presse", name: "Presse à cuisses pieds hauts", muscles: "Fessiers · Ischios", sets: 3, repsRange: "10-12", rir: "2", tempo: "", note: "Pieds hauts sur la plateforme. Réduit pression genoux" },
+        ]
+      },
+      {
+        name: "ISOLATION & MOLLETS",
+        exercises: [
+          { id: "leg_curl", name: "Leg curl couché", muscles: "Ischios", sets: 3, repsRange: "12-15", rir: "1", tempo: "", note: "Version allongée : hanche en extension" },
+          { id: "leg_ext", name: "Leg extension", muscles: "Quadriceps · Droit fémoral", sets: 3, repsRange: "12-15", rir: "1", tempo: "", note: "Amplitude complète. Zone rare bien travaillée" },
+          { id: "mollets", name: "Mollets debout presse / Smith", muscles: "Gastrocnémien · Soléaire", sets: 4, repsRange: "15-20", rir: "1", tempo: "Excentrique 3 sec", note: "Talon en dessous du niveau. Volume élevé nécessaire" },
+        ]
+      }
+    ]
+  },
+  upper: {
+    name: "Upper",
+    day: "Samedi",
+    icon: "🏆",
+    color: "#f59e0b",
+    groups: [
+      {
+        name: "PECTORAUX",
+        exercises: [
+          { id: "dev_couche", name: "Développé couché barre", muscles: "Pec median · Triceps", sets: 3, repsRange: "8-10", rir: "2", tempo: "Excentrique 2 sec", note: "Descendre jusqu'à effleurer le sternum" },
+          { id: "fly_halt", name: "Fly haltères banc plat", muscles: "Pec median · Pec bas", sets: 3, repsRange: "12-15", rir: "1", tempo: "", note: "Étirer le pec en position basse. Contraction contrôlée" },
+        ]
+      },
+      {
+        name: "DOS",
+        exercises: [
+          { id: "rowing_1bras", name: "Rowing un bras haltère sur banc incliné", muscles: "Grand dorsal · Rhomboïdes", sets: 3, repsRange: "10-12", rir: "2", tempo: "", note: "Support sur banc incliné : élimine la compensation lombaire" },
+          { id: "lat_pull_large", name: "Lat pulldown prise large", muscles: "Grand dorsal · Grand rond", sets: 3, repsRange: "10-12", rir: "2", tempo: "", note: "Maintient la fréquence sur le dorsal" },
+        ]
+      },
+      {
+        name: "ÉPAULES",
+        exercises: [
+          { id: "elev_lat2", name: "Élévations latérales haltères", muscles: "Deltoïde med.", sets: 3, repsRange: "15-20", rir: "1", tempo: "", note: "Léger, technique irréprochable" },
+          { id: "face_pull2", name: "Face pull corde", muscles: "Deltoïde post. · Trapèzes inf.", sets: 3, repsRange: "15-20", rir: "1", tempo: "", note: "Indispensable pour la santé glénohumérale" },
+        ]
+      },
+      {
+        name: "BRAS",
+        exercises: [
+          { id: "curl_ez", name: "Curl barre EZ", muscles: "Biceps · Brachial", sets: 3, repsRange: "10-12", rir: "2", tempo: "Excentrique 2 sec", note: "Amplitude complète, pas de balancier" },
+          { id: "ext_tri", name: "Extension triceps haltère au-dessus tête", muscles: "Chef long", sets: 3, repsRange: "12-15", rir: "2", tempo: "", note: "Étirement maximal du chef long. Très efficace pour la masse" },
+        ]
+      }
+    ]
+  }
+};
+
+const WEEK_SCHEDULE = [
+  { key: 'street', label: 'LUN', fullDay: 'Lundi', type: 'workout' },
+  { key: 'push', label: 'MAR', fullDay: 'Mardi', type: 'workout' },
+  { key: 'rest', label: 'MER', fullDay: 'Mercredi', type: 'rest' },
+  { key: 'pull', label: 'JEU', fullDay: 'Jeudi', type: 'workout' },
+  { key: 'legs', label: 'VEN', fullDay: 'Vendredi', type: 'workout' },
+  { key: 'upper', label: 'SAM', fullDay: 'Samedi', type: 'workout' },
+  { key: 'rest2', label: 'DIM', fullDay: 'Dimanche', type: 'rest' },
+];
+
+const MOTIVATION_MSGS = [
+  "Let's go 🔥 C'est l'heure de briller",
+  "Chaque série compte 💪",
+  "La progression se construit séance par séance",
+  "Tu t'améliores chaque jour 📈",
+  "Le plus dur c'est de commencer 🎯",
+  "Force mentale = force physique 🧠",
+];
+
+const getStorage = (key, def) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; } catch { return def; } };
+const setStorage = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} };
+
+const getWeekKey = () => {
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return `W${Math.ceil((((d - yearStart) / 86400000) + 1) / 7)}_${d.getUTCFullYear()}`;
+};
+
+// ==================== COMPONENTS ====================
+
+// Profile Selection
+function ProfileSelect({ onSelect }) {
+  const profiles = [
+    { id: 'rayan', name: 'Rayan', emoji: '⚡', color: '#c8ff00' },
+    { id: 'chid', name: 'Chid', emoji: '🔥', color: '#ff6b35' },
+  ];
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', background: 'var(--bg)', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', top: '-20%', left: '-10%', width: '400px', height: '400px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(200,255,0,0.06) 0%, transparent 70%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: '-20%', right: '-10%', width: '300px', height: '300px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,107,53,0.06) 0%, transparent 70%)', pointerEvents: 'none' }} />
+      <div style={{ textAlign: 'center', marginBottom: '48px', animation: 'fadeIn 0.6s ease' }}>
+        <div style={{ fontSize: '48px', marginBottom: '12px' }}>🏋️</div>
+        <h1 style={{ fontFamily: 'Bebas Neue', fontSize: 'clamp(40px, 8vw, 64px)', letterSpacing: '4px', color: 'var(--accent)', lineHeight: 1 }}>STREET LIFTING</h1>
+        <p style={{ color: 'var(--muted)', fontSize: '14px', letterSpacing: '3px', marginTop: '8px', textTransform: 'uppercase' }}>Sélectionne ton profil</p>
+      </div>
+      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', width: '100%', maxWidth: '480px' }}>
+        {profiles.map((p, i) => (
+          <button key={p.id} onClick={() => onSelect(p)} style={{ flex: '1', minWidth: '160px', background: 'var(--surface)', border: `1px solid var(--border)`, borderRadius: '24px', padding: '32px 20px', cursor: 'pointer', transition: 'all 0.3s ease', color: 'var(--text)', animation: `popIn 0.5s ease ${i * 0.15}s both`, position: 'relative', overflow: 'hidden' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface2)'; e.currentTarget.style.borderColor = p.color; e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = `0 20px 40px ${p.color}22`; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}>
+            <div style={{ fontSize: '48px', marginBottom: '12px' }}>{p.emoji}</div>
+            <div style={{ fontFamily: 'Bebas Neue', fontSize: '32px', letterSpacing: '3px', color: p.color }}>{p.name}</div>
+            <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>Voir mon programme</div>
+          </button>
+        ))}
+      </div>
+      <p style={{ position: 'absolute', bottom: '24px', color: 'var(--muted)', fontSize: '11px', letterSpacing: '1px' }}>STREET LIFTING & HYPERTROPHIE — 5J/7</p>
+    </div>
+  );
+}
+
+// Bottom Nav
+function BottomNav({ active, onChange }) {
+  const tabs = [
+    { key: 'home', icon: '🏠', label: 'Home' },
+    { key: 'session', icon: '💪', label: 'Séance' },
+    { key: 'progress', icon: '📈', label: 'Stats' },
+    { key: 'coach', icon: '🧠', label: 'Coach' },
+  ];
+  return (
+    <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'var(--surface)', borderTop: '1px solid var(--border)', display: 'flex', zIndex: 100, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+      {tabs.map(t => (
+        <button key={t.key} onClick={() => onChange(t.key)} style={{ flex: 1, background: 'none', border: 'none', padding: '12px 0 10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'all 0.2s', color: active === t.key ? 'var(--accent)' : 'var(--muted)' }}>
+          <span style={{ fontSize: '20px', transition: 'transform 0.2s', transform: active === t.key ? 'scale(1.2)' : 'scale(1)' }}>{t.icon}</span>
+          <span style={{ fontSize: '10px', fontWeight: active === t.key ? '600' : '400', letterSpacing: '0.5px' }}>{t.label}</span>
+          {active === t.key && <div style={{ width: '20px', height: '2px', background: 'var(--accent)', borderRadius: '2px', marginTop: '1px' }} />}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+// Home Screen
+function HomeScreen({ profile, weekData, onStartSession, weekKey }) {
+  const today = new Date().getDay();
+  const dayMap = { 1: 'street', 2: 'push', 4: 'pull', 5: 'legs', 6: 'upper' };
+  const todaySession = dayMap[today];
+  const msg = MOTIVATION_MSGS[Math.floor(Math.random() * MOTIVATION_MSGS.length)];
+  const [motivMsg] = useState(msg);
+
+  const completedSessions = Object.keys(weekData || {}).filter(k => weekData[k]?.completed).length;
+  const totalWorkouts = 5;
+  const score = Math.round((completedSessions / totalWorkouts) * 100);
+
+  return (
+    <div style={{ padding: '20px 16px', paddingBottom: '80px', animation: 'fadeIn 0.4s ease' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+        <div>
+          <p style={{ color: 'var(--muted)', fontSize: '12px', letterSpacing: '2px', textTransform: 'uppercase' }}>Bienvenue</p>
+          <h2 style={{ fontFamily: 'Bebas Neue', fontSize: '32px', letterSpacing: '2px', color: profile.color }}>{profile.name}</h2>
+        </div>
+        <div style={{ background: 'var(--surface2)', borderRadius: '16px', padding: '10px 14px', border: '1px solid var(--border)' }}>
+          <div style={{ fontSize: '10px', color: 'var(--muted)', textAlign: 'center' }}>Semaine</div>
+          <div style={{ fontFamily: 'Bebas Neue', fontSize: '20px', color: 'var(--accent)', textAlign: 'center' }}>{completedSessions}/{totalWorkouts}</div>
+        </div>
+      </div>
+
+      {/* Motivation Banner */}
+      <div style={{ background: `linear-gradient(135deg, ${profile.color}22, transparent)`, border: `1px solid ${profile.color}44`, borderRadius: '16px', padding: '16px', marginBottom: '20px', animation: 'glow 3s ease infinite' }}>
+        <p style={{ fontSize: '14px', fontWeight: '500', color: profile.color }}>{motivMsg}</p>
+        <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>Programme 5j/7 · Phase : Poids de corps</p>
+      </div>
+
+      {/* Today's session */}
+      {todaySession && PROGRAM[todaySession] ? (
+        <div style={{ background: 'var(--surface)', border: `1px solid ${PROGRAM[todaySession].color}44`, borderRadius: '20px', padding: '20px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <div>
+              <p style={{ fontSize: '11px', color: 'var(--muted)', letterSpacing: '2px', textTransform: 'uppercase' }}>Aujourd'hui</p>
+              <h3 style={{ fontFamily: 'Bebas Neue', fontSize: '28px', color: PROGRAM[todaySession].color, letterSpacing: '2px' }}>{PROGRAM[todaySession].icon} {PROGRAM[todaySession].name}</h3>
+            </div>
+            {weekData?.[todaySession]?.completed && <div style={{ background: 'var(--green)', borderRadius: '12px', padding: '6px 12px', fontSize: '12px', fontWeight: '600' }}>✓ Fait</div>}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+            {PROGRAM[todaySession].groups.map(g => (
+              <span key={g.name} style={{ background: 'var(--surface2)', borderRadius: '8px', padding: '4px 10px', fontSize: '11px', color: 'var(--muted)' }}>{g.name}</span>
+            ))}
+          </div>
+          <button onClick={() => onStartSession(todaySession)} style={{ width: '100%', background: PROGRAM[todaySession].color, color: '#000', border: 'none', borderRadius: '12px', padding: '14px', fontFamily: 'Bebas Neue', fontSize: '18px', letterSpacing: '2px', cursor: 'pointer', transition: 'all 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}>
+            {weekData?.[todaySession]?.completed ? 'VOIR LA SÉANCE' : 'COMMENCER LA SÉANCE'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ background: 'var(--surface)', borderRadius: '20px', padding: '24px', marginBottom: '20px', textAlign: 'center' }}>
+          <div style={{ fontSize: '40px', marginBottom: '8px' }}>😴</div>
+          <h3 style={{ fontFamily: 'Bebas Neue', fontSize: '24px', color: 'var(--muted)', letterSpacing: '2px' }}>REPOS</h3>
+          <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px' }}>Récupération active, étirements 10min</p>
+        </div>
+      )}
+
+      {/* Weekly Schedule */}
+      <div style={{ background: 'var(--surface)', borderRadius: '20px', padding: '16px', marginBottom: '20px' }}>
+        <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '12px' }}>Planning semaine</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '6px' }}>
+          {WEEK_SCHEDULE.map((d, i) => {
+            const isToday = i === (today === 0 ? 6 : today - 1);
+            const prog = PROGRAM[d.key];
+            const done = weekData?.[d.key]?.completed;
+            return (
+              <div key={d.key} onClick={() => prog && onStartSession(d.key)} style={{ background: isToday ? 'var(--surface3)' : 'var(--surface2)', borderRadius: '10px', padding: '8px 4px', textAlign: 'center', cursor: prog ? 'pointer' : 'default', border: isToday ? `1px solid ${prog?.color || 'var(--accent)'}` : '1px solid transparent', transition: 'all 0.2s' }}>
+                <div style={{ fontSize: '9px', color: isToday ? (prog?.color || 'var(--accent)') : 'var(--muted)', marginBottom: '4px', fontWeight: '600' }}>{d.label}</div>
+                <div style={{ fontSize: '16px' }}>{d.type === 'rest' ? '💤' : done ? '✅' : (prog?.icon || '💪')}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Score Card */}
+      <div style={{ background: 'var(--surface)', borderRadius: '20px', padding: '20px' }}>
+        <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '16px' }}>Score de la semaine</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ position: 'relative', width: '80px', height: '80px' }}>
+            <svg viewBox="0 0 80 80" style={{ transform: 'rotate(-90deg)', width: '80px', height: '80px' }}>
+              <circle cx="40" cy="40" r="32" fill="none" stroke="var(--surface2)" strokeWidth="8" />
+              <circle cx="40" cy="40" r="32" fill="none" stroke={score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--orange)' : 'var(--red)'} strokeWidth="8" strokeDasharray={`${score * 2.01} 201`} strokeLinecap="round" style={{ transition: 'stroke-dasharray 1s ease' }} />
+            </svg>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Bebas Neue', fontSize: '22px', color: score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--orange)' : 'var(--red)' }}>{score}</div>
+          </div>
+          <div>
+            <div style={{ fontFamily: 'Bebas Neue', fontSize: '24px', color: score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--orange)' : 'var(--red)' }}>
+              {score >= 80 ? '🟢 Excellent' : score >= 50 ? '🟠 Moyen' : '🔴 Faible'}
+            </div>
+            <div style={{ color: 'var(--muted)', fontSize: '13px' }}>{completedSessions} séance{completedSessions > 1 ? 's' : ''} cette semaine</div>
+            <div style={{ color: 'var(--muted)', fontSize: '11px', marginTop: '2px' }}>Objectif : 5 séances</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Set Input Row
+function SetRow({ setNum, value, onChange, repsRange }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--surface3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '600', color: 'var(--accent)', flexShrink: 0 }}>{setNum}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '4px' }}>Série {setNum} · Objectif : {repsRange} reps</div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input type="number" min="0" max="100" value={value.reps || ''} onChange={e => onChange({ ...value, reps: e.target.value })} placeholder="Reps" style={{ width: '70px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 10px', color: 'var(--text)', fontSize: '14px', fontWeight: '600', outline: 'none', textAlign: 'center' }}
+            onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+            onBlur={e => e.target.style.borderColor = 'var(--border)'} />
+          <span style={{ color: 'var(--muted)', fontSize: '12px' }}>reps</span>
+          <input type="number" min="0" max="999" step="0.5" value={value.weight || ''} onChange={e => onChange({ ...value, weight: e.target.value })} placeholder="kg" style={{ width: '70px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 10px', color: 'var(--text)', fontSize: '14px', fontWeight: '600', outline: 'none', textAlign: 'center' }}
+            onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+            onBlur={e => e.target.style.borderColor = 'var(--border)'} />
+          <span style={{ color: 'var(--muted)', fontSize: '12px' }}>kg</span>
+        </div>
+      </div>
+      {value.reps > 0 && <div style={{ fontSize: '16px' }}>✅</div>}
+    </div>
+  );
+}
+
+// Exercise Card
+function ExerciseCard({ exercise, data, onChange, accentColor }) {
+  const [expanded, setExpanded] = useState(false);
+  const sets = Array.from({ length: exercise.sets }, (_, i) => data?.sets?.[i] || {});
+  const allDone = sets.every(s => s.reps > 0);
+
+  return (
+    <div style={{ background: 'var(--surface)', borderRadius: '16px', marginBottom: '12px', border: allDone ? `1px solid ${accentColor}66` : '1px solid var(--border)', overflow: 'hidden', transition: 'border-color 0.3s' }}>
+      <div onClick={() => setExpanded(!expanded)} style={{ padding: '14px 16px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            {allDone && <span style={{ fontSize: '14px' }}>✅</span>}
+            <h4 style={{ fontSize: '14px', fontWeight: '600', color: allDone ? accentColor : 'var(--text)', lineHeight: 1.3 }}>{exercise.name}</h4>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '11px', color: 'var(--muted)', background: 'var(--surface2)', borderRadius: '6px', padding: '2px 8px' }}>{exercise.sets} × {exercise.repsRange}</span>
+            <span style={{ fontSize: '11px', color: 'var(--muted)', background: 'var(--surface2)', borderRadius: '6px', padding: '2px 8px' }}>RIR {exercise.rir}</span>
+            {exercise.tempo && <span style={{ fontSize: '11px', color: accentColor, background: `${accentColor}22`, borderRadius: '6px', padding: '2px 8px' }}>{exercise.tempo}</span>}
+          </div>
+        </div>
+        <span style={{ color: 'var(--muted)', fontSize: '18px', transition: 'transform 0.2s', transform: expanded ? 'rotate(180deg)' : 'none', marginLeft: '8px' }}>▾</span>
+      </div>
+      {expanded && (
+        <div style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)' }}>
+          <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '10px 0', fontStyle: 'italic' }}>💡 {exercise.note}</p>
+          <p style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>Muscles : {exercise.muscles}</p>
+          {sets.map((s, i) => (
+            <SetRow key={i} setNum={i + 1} value={s} repsRange={exercise.repsRange} onChange={val => {
+              const newSets = [...sets]; newSets[i] = val;
+              onChange({ ...data, sets: newSets });
+            }} />
+          ))}
+          <div style={{ marginTop: '12px' }}>
+            <textarea value={data?.notes || ''} onChange={e => onChange({ ...data, notes: e.target.value })} placeholder="Notes / sensations sur cet exercice..." style={{ width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 12px', color: 'var(--text)', fontSize: '13px', outline: 'none', resize: 'none', minHeight: '60px', lineHeight: '1.5' }}
+              onFocus={e => e.target.style.borderColor = accentColor}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Session Screen
+function SessionScreen({ profile, weekData, setWeekData, selectedSession, setSelectedSession }) {
+  const [sessionData, setSessionData] = useState({});
+  const [sessionTime, setSessionTime] = useState(0);
+  const [timerActive, setTimerActive] = useState(false);
+  const [difficulty, setDifficulty] = useState(3);
+  const [sessionNotes, setSessionNotes] = useState('');
+  const [saved, setSaved] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (!selectedSession || !weekData?.[selectedSession]) return;
+    const d = weekData[selectedSession];
+    setSessionData(d.exercises || {});
+    setSessionTime(d.duration || 0);
+    setDifficulty(d.difficulty || 3);
+    setSessionNotes(d.notes || '');
+  }, [selectedSession]);
+
+  useEffect(() => {
+    if (timerActive) {
+      timerRef.current = setInterval(() => setSessionTime(t => t + 1), 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [timerActive]);
+
+  if (!selectedSession) {
+    return (
+      <div style={{ padding: '20px 16px', paddingBottom: '80px' }}>
+        <h2 style={{ fontFamily: 'Bebas Neue', fontSize: '28px', letterSpacing: '2px', marginBottom: '20px', color: 'var(--accent)' }}>CHOISIR UNE SÉANCE</h2>
+        {Object.entries(PROGRAM).map(([key, prog]) => {
+          const done = weekData?.[key]?.completed;
+          return (
+            <div key={key} onClick={() => setSelectedSession(key)} style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '12px', cursor: 'pointer', border: done ? `1px solid ${prog.color}66` : '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'all 0.2s' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'var(--surface)'}>
+              <div style={{ fontSize: '32px' }}>{prog.icon}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: 'Bebas Neue', fontSize: '20px', color: prog.color, letterSpacing: '1px' }}>{prog.name}</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{prog.day} · {prog.groups.reduce((a, g) => a + g.exercises.length, 0)} exercices</div>
+              </div>
+              {done && <div style={{ background: 'var(--green)', borderRadius: '10px', padding: '4px 10px', fontSize: '12px', fontWeight: '600' }}>✓</div>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const prog = PROGRAM[selectedSession];
+  if (!prog) return null;
+  const allExercises = prog.groups.flatMap(g => g.exercises);
+  const completedCount = allExercises.filter(e => sessionData[e.id]?.sets?.every(s => s.reps > 0) && sessionData[e.id]?.sets?.length > 0).length;
+
+  const formatTime = s => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+
+  const saveSession = () => {
+    const newWeek = { ...(weekData || {}), [selectedSession]: { completed: true, exercises: sessionData, duration: sessionTime, difficulty, notes: sessionNotes, date: new Date().toISOString() } };
+    setWeekData(newWeek);
+    setStorage(`fitness_${profile.id}_week_${getWeekKey()}`, newWeek);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  return (
+    <div style={{ paddingBottom: '80px', animation: 'fadeIn 0.4s ease' }}>
+      {/* Header */}
+      <div style={{ background: `linear-gradient(180deg, ${prog.color}18 0%, transparent 100%)`, padding: '20px 16px 16px', position: 'sticky', top: 0, zIndex: 10, backdropFilter: 'blur(10px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+          <button onClick={() => setSelectedSession(null)} style={{ background: 'var(--surface2)', border: 'none', borderRadius: '10px', padding: '8px 12px', color: 'var(--muted)', cursor: 'pointer', fontSize: '14px' }}>← Retour</button>
+          <div>
+            <h2 style={{ fontFamily: 'Bebas Neue', fontSize: '26px', color: prog.color, letterSpacing: '2px', lineHeight: 1 }}>{prog.icon} {prog.name}</h2>
+            <p style={{ fontSize: '11px', color: 'var(--muted)' }}>{completedCount}/{allExercises.length} exercices · {prog.day}</p>
+          </div>
+        </div>
+        {/* Timer row */}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div style={{ background: 'var(--surface)', borderRadius: '12px', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+            <span style={{ fontSize: '16px' }}>⏱️</span>
+            <span style={{ fontFamily: 'Bebas Neue', fontSize: '22px', color: 'var(--accent)', letterSpacing: '2px' }}>{formatTime(sessionTime)}</span>
+          </div>
+          <button onClick={() => setTimerActive(!timerActive)} style={{ background: timerActive ? 'var(--red)' : 'var(--green)', border: 'none', borderRadius: '12px', padding: '8px 16px', color: '#fff', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>
+            {timerActive ? '⏸ Pause' : '▶ Start'}
+          </button>
+        </div>
+        {/* Progress bar */}
+        <div style={{ marginTop: '10px', background: 'var(--surface2)', borderRadius: '4px', height: '4px', overflow: 'hidden' }}>
+          <div style={{ height: '100%', background: prog.color, width: `${(completedCount / allExercises.length) * 100}%`, transition: 'width 0.5s ease', borderRadius: '4px' }} />
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 16px' }}>
+        {prog.groups.map(group => (
+          <div key={group.name} style={{ marginBottom: '24px' }}>
+            <h3 style={{ fontSize: '11px', letterSpacing: '3px', color: prog.color, textTransform: 'uppercase', marginBottom: '12px', paddingLeft: '4px' }}>{group.name}</h3>
+            {group.exercises.map(ex => (
+              <ExerciseCard key={ex.id} exercise={ex} accentColor={prog.color} data={sessionData[ex.id]} onChange={val => setSessionData(prev => ({ ...prev, [ex.id]: val }))} />
+            ))}
+          </div>
+        ))}
+
+        {/* Session Notes */}
+        <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '16px' }}>
+          <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '10px', color: 'var(--muted)', letterSpacing: '1px' }}>NOTES DE SÉANCE</h3>
+          <textarea value={sessionNotes} onChange={e => setSessionNotes(e.target.value)} placeholder="Comment s'est passée la séance ? Douleurs, observations..." style={{ width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '12px', color: 'var(--text)', fontSize: '13px', outline: 'none', resize: 'none', minHeight: '80px', lineHeight: '1.5' }} />
+        </div>
+
+        {/* Difficulty */}
+        <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '20px' }}>
+          <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '12px', color: 'var(--muted)', letterSpacing: '1px' }}>DIFFICULTÉ RESSENTIE</h3>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {[1,2,3,4,5].map(d => (
+              <button key={d} onClick={() => setDifficulty(d)} style={{ flex: 1, background: difficulty >= d ? prog.color : 'var(--surface2)', border: 'none', borderRadius: '10px', padding: '12px 0', cursor: 'pointer', fontSize: '14px', fontWeight: '700', color: difficulty >= d ? '#000' : 'var(--muted)', transition: 'all 0.2s' }}>{d}</button>
+            ))}
+          </div>
+          <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '8px', textAlign: 'center' }}>
+            {difficulty <= 2 ? 'Facile 😌' : difficulty === 3 ? 'Modéré 💪' : difficulty === 4 ? 'Intense 🔥' : 'Maximum 💀'}
+          </p>
+        </div>
+
+        {/* Complete button */}
+        <button onClick={saveSession} style={{ width: '100%', background: saved ? 'var(--green)' : `linear-gradient(135deg, ${prog.color}, ${prog.color}cc)`, color: '#000', border: 'none', borderRadius: '16px', padding: '18px', fontFamily: 'Bebas Neue', fontSize: '22px', letterSpacing: '3px', cursor: 'pointer', transition: 'all 0.3s', boxShadow: saved ? '0 0 30px rgba(34,197,94,0.4)' : `0 8px 30px ${prog.color}44` }}>
+          {saved ? '✅ SÉANCE SAUVEGARDÉE !' : '🏁 TERMINER LA SÉANCE'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Progress Screen
+function ProgressScreen({ profile, allHistory }) {
+  const [selectedEx, setSelectedEx] = useState('traction_pro');
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  const allExercises = Object.values(PROGRAM).flatMap(p => p.groups.flatMap(g => g.exercises));
+  const exerciseMap = {};
+  allExercises.forEach(e => exerciseMap[e.id] = e);
+
+  // Build history for selected exercise
+  const history = [];
+  Object.entries(allHistory || {}).forEach(([weekKey, weekData]) => {
+    Object.entries(weekData || {}).forEach(([sessKey, sessData]) => {
+      if (sessData?.exercises?.[selectedEx]) {
+        const exData = sessData.exercises[selectedEx];
+        const maxReps = Math.max(...(exData.sets || []).map(s => parseInt(s.reps) || 0));
+        const totalReps = (exData.sets || []).reduce((a, s) => a + (parseInt(s.reps) || 0), 0);
+        if (maxReps > 0) history.push({ week: weekKey, maxReps, totalReps, date: sessData.date });
+      }
+    });
+  });
+  history.sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1);
+
+  useEffect(() => {
+    if (!canvasRef.current || history.length === 0) return;
+    if (chartRef.current) { chartRef.current.destroy(); }
+    const ctx = canvasRef.current.getContext('2d');
+    const prog = Object.values(PROGRAM).find(p => p.groups.some(g => g.exercises.some(e => e.id === selectedEx)));
+    const color = prog?.color || '#c8ff00';
+    chartRef.current = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: history.map((h, i) => `S${i + 1}`),
+        datasets: [{
+          label: 'Max reps',
+          data: history.map(h => h.maxReps),
+          borderColor: color,
+          backgroundColor: `${color}22`,
+          fill: true,
+          tension: 0.4,
+          pointBackgroundColor: color,
+          pointRadius: 5,
+          borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.raw} reps` } } },
+        scales: {
+          x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b80' } },
+          y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b80' }, beginAtZero: true }
+        }
+      }
+    });
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [selectedEx, allHistory]);
+
+  const totalSessions = Object.values(allHistory || {}).reduce((a, w) => a + Object.values(w || {}).filter(s => s?.completed).length, 0);
+  const totalWeeks = Object.keys(allHistory || {}).length;
+
+  return (
+    <div style={{ padding: '20px 16px', paddingBottom: '80px', animation: 'fadeIn 0.4s ease' }}>
+      <h2 style={{ fontFamily: 'Bebas Neue', fontSize: '28px', letterSpacing: '2px', marginBottom: '8px', color: 'var(--accent)' }}>PROGRESSION</h2>
+      <p style={{ color: 'var(--muted)', fontSize: '13px', marginBottom: '20px' }}>{profile.name} · Vue d'ensemble</p>
+
+      {/* Stats row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '20px' }}>
+        {[
+          { label: 'Séances', value: totalSessions, icon: '🏋️' },
+          { label: 'Semaines', value: totalWeeks, icon: '📅' },
+          { label: 'Streak', value: `${totalSessions > 0 ? Math.min(totalSessions, 7) : 0}j`, icon: '🔥' },
+        ].map(s => (
+          <div key={s.label} style={{ background: 'var(--surface)', borderRadius: '14px', padding: '14px 10px', textAlign: 'center' }}>
+            <div style={{ fontSize: '20px', marginBottom: '4px' }}>{s.icon}</div>
+            <div style={{ fontFamily: 'Bebas Neue', fontSize: '24px', color: 'var(--accent)' }}>{s.value}</div>
+            <div style={{ fontSize: '10px', color: 'var(--muted)' }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Exercise selector */}
+      <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '16px' }}>
+        <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '10px' }}>Sélectionner un exercice</h3>
+        <select value={selectedEx} onChange={e => setSelectedEx(e.target.value)} style={{ width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 12px', color: 'var(--text)', fontSize: '13px', outline: 'none', cursor: 'pointer' }}>
+          {Object.entries(PROGRAM).map(([pk, prog]) => (
+            <optgroup key={pk} label={`${prog.icon} ${prog.name}`} style={{ color: prog.color }}>
+              {prog.groups.flatMap(g => g.exercises.map(e => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              )))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+
+      {/* Chart */}
+      <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '16px' }}>
+        <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '12px' }}>Évolution — {exerciseMap[selectedEx]?.name}</h3>
+        {history.length > 0 ? (
+          <div style={{ height: '200px' }}>
+            <canvas ref={canvasRef} />
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--muted)' }}>
+            <div style={{ fontSize: '32px', marginBottom: '8px' }}>📊</div>
+            <p style={{ fontSize: '13px' }}>Pas encore de données</p>
+            <p style={{ fontSize: '12px', marginTop: '4px', color: 'var(--muted)' }}>Lance une séance pour commencer à tracker !</p>
+          </div>
+        )}
+      </div>
+
+      {/* Recent history */}
+      {history.length > 0 && (
+        <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px' }}>
+          <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '12px' }}>Dernières performances</h3>
+          {history.slice(-5).reverse().map((h, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: i < Math.min(history.length, 5) - 1 ? '1px solid var(--border)' : 'none' }}>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: '500' }}>Séance {history.length - i}</div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{h.date ? new Date(h.date).toLocaleDateString('fr-FR') : h.week}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontFamily: 'Bebas Neue', fontSize: '20px', color: 'var(--accent)' }}>{h.maxReps} reps</div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Volume : {h.totalReps}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Coach Screen
+function CoachScreen({ profile, weekData, allHistory }) {
+  const completedSessions = Object.keys(weekData || {}).filter(k => weekData[k]?.completed);
+  const totalWorkouts = 5;
+  const completionRate = completedSessions.length / totalWorkouts;
+  const avgDifficulty = completedSessions.length > 0
+    ? completedSessions.reduce((a, k) => a + (weekData[k]?.difficulty || 3), 0) / completedSessions.length
+    : 0;
+
+  // Generate coach feedback
+  const feedback = [];
+  const recs = [];
+
+  if (completedSessions.length === 0) {
+    feedback.push({ icon: '⚠️', text: "Aucune séance cette semaine. Commence maintenant !", type: 'warning' });
+    recs.push("Lance-toi aujourd'hui, même 30 minutes c'est une victoire");
+  } else if (completedSessions.length < 3) {
+    feedback.push({ icon: '🟠', text: `${completedSessions.length} séance${completedSessions.length > 1 ? 's' : ''} cette semaine. Peut mieux faire !`, type: 'warning' });
+    recs.push("Essaie de compléter au moins 3 séances par semaine");
+  } else if (completedSessions.length >= 5) {
+    feedback.push({ icon: '🟢', text: "Semaine parfaite ! 5/5 séances complétées 🔥", type: 'success' });
+    recs.push("Maintiens ce rythme, tu es dans la zone optimale");
+  } else {
+    feedback.push({ icon: '💪', text: `Bonne semaine ! ${completedSessions.length}/5 séances réalisées`, type: 'good' });
+  }
+
+  // Check missing sessions
+  const missingSessions = ['street', 'push', 'pull', 'legs', 'upper'].filter(s => !completedSessions.includes(s));
+  if (missingSessions.length > 0) {
+    const missing = missingSessions.map(s => PROGRAM[s].name).join(', ');
+    feedback.push({ icon: '📋', text: `Séances manquées : ${missing}`, type: 'info' });
+    recs.push(`Priorité semaine prochaine : ${PROGRAM[missingSessions[0]].name}`);
+  }
+
+  if (avgDifficulty >= 4) {
+    feedback.push({ icon: '🔥', text: "Haute intensité cette semaine. Assure-toi de bien récupérer", type: 'info' });
+    recs.push("Soigne ton sommeil (7h30-9h) et ta nutrition protéinée");
+  } else if (avgDifficulty > 0 && avgDifficulty <= 2) {
+    feedback.push({ icon: '📈', text: "Séances trop faciles. Il faut augmenter l'intensité !", type: 'warning' });
+    recs.push("Augmente les reps ou ajoute du lest selon la phase");
+  }
+
+  // Street lifting phase check
+  if (weekData?.street?.completed) {
+    const exData = weekData.street.exercises;
+    const tractionSets = exData?.traction_pro?.sets || [];
+    const maxTractionReps = Math.max(...tractionSets.map(s => parseInt(s.reps) || 0));
+    if (maxTractionReps >= 10) {
+      feedback.push({ icon: '⭐', text: `Superbe ! ${maxTractionReps} reps max en traction. Proche du passage au lest !`, type: 'success' });
+      recs.push("Rappel : 3x10 tractions stables 2 semaines → introduction du lest (+5kg)");
+    } else if (maxTractionReps > 0) {
+      feedback.push({ icon: '🎯', text: `Tractions : ${maxTractionReps} reps max. Objectif : 10 reps`, type: 'info' });
+    }
+  }
+
+  recs.push("Rappel : RIR 2, excentrique 3 sec sur chaque rep = hypertrophie maximale");
+
+  const score = Math.min(100, Math.round(
+    completionRate * 50 +
+    (avgDifficulty / 5) * 30 +
+    (completedSessions.includes('street') ? 20 : 0)
+  ));
+
+  return (
+    <div style={{ padding: '20px 16px', paddingBottom: '80px', animation: 'fadeIn 0.4s ease' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+        <div style={{ fontSize: '36px' }}>🧠</div>
+        <div>
+          <h2 style={{ fontFamily: 'Bebas Neue', fontSize: '28px', letterSpacing: '2px', color: 'var(--accent)', lineHeight: 1 }}>COACH IA</h2>
+          <p style={{ color: 'var(--muted)', fontSize: '12px' }}>Bilan hebdomadaire · {profile.name}</p>
+        </div>
+      </div>
+
+      {/* Score */}
+      <div style={{ background: 'linear-gradient(135deg, var(--surface2), var(--surface))', borderRadius: '20px', padding: '24px', marginBottom: '20px', textAlign: 'center', border: '1px solid var(--border)' }}>
+        <div style={{ fontFamily: 'Bebas Neue', fontSize: '72px', lineHeight: 1, color: score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--orange)' : 'var(--red)' }}>{score}</div>
+        <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '8px' }}>Score semaine / 100</div>
+        <div style={{ display: 'inline-block', background: score >= 80 ? 'rgba(34,197,94,0.15)' : score >= 50 ? 'rgba(249,115,22,0.15)' : 'rgba(239,68,68,0.15)', borderRadius: '20px', padding: '6px 20px', fontSize: '14px', fontWeight: '600', color: score >= 80 ? 'var(--green)' : score >= 50 ? 'var(--orange)' : 'var(--red)' }}>
+          {score >= 80 ? '🟢 Excellent' : score >= 50 ? '🟠 Moyen' : '🔴 Faible'}
+        </div>
+      </div>
+
+      {/* Feedback */}
+      <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '16px' }}>
+        <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '14px' }}>Analyse de la semaine</h3>
+        {feedback.map((f, i) => (
+          <div key={i} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', padding: '10px 0', borderBottom: i < feedback.length - 1 ? '1px solid var(--border)' : 'none' }}>
+            <span style={{ fontSize: '20px', flexShrink: 0 }}>{f.icon}</span>
+            <p style={{ fontSize: '13px', lineHeight: '1.5', color: f.type === 'success' ? 'var(--green)' : f.type === 'warning' ? 'var(--orange)' : 'var(--text)' }}>{f.text}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Recommendations */}
+      <div style={{ background: 'var(--surface)', borderRadius: '16px', padding: '16px', marginBottom: '16px' }}>
+        <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '14px' }}>Recommandations semaine prochaine</h3>
+        {recs.map((r, i) => (
+          <div key={i} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', padding: '10px 0', borderBottom: i < recs.length - 1 ? '1px solid var(--border)' : 'none' }}>
+            <span style={{ color: 'var(--accent)', fontSize: '16px', flexShrink: 0 }}>→</span>
+            <p style={{ fontSize: '13px', lineHeight: '1.5', color: 'var(--text)' }}>{r}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Phase reminder */}
+      <div style={{ background: 'linear-gradient(135deg, rgba(200,255,0,0.1), rgba(200,255,0,0.05))', border: '1px solid rgba(200,255,0,0.2)', borderRadius: '16px', padding: '16px' }}>
+        <h3 style={{ fontSize: '12px', letterSpacing: '2px', color: 'var(--accent)', textTransform: 'uppercase', marginBottom: '12px' }}>📌 Protocole de progression</h3>
+        <div style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.8' }}>
+          <div>• <strong style={{ color: 'var(--text)' }}>Phase 1 (S1-S3)</strong> : Poids de corps · Objectif 3×10 tractions + 3×12 dips</div>
+          <div>• <strong style={{ color: 'var(--text)' }}>Phase 2 (S4-S6)</strong> : +5kg · 4×5 reps. Ne pas augmenter avant maîtrise 2 sessions</div>
+          <div>• <strong style={{ color: 'var(--text)' }}>Phase 3 (S7+)</strong> : +2,5kg par palier · Double progression</div>
+          <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(200,255,0,0.08)', borderRadius: '8px' }}>
+            💡 Double progression : atteins la borne haute sur TOUTES les séries → ajoute 2,5kg
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== MAIN APP ====================
+function App() {
+  const [profile, setProfile] = useState(() => getStorage('fitness_profile', null));
+  const [activeTab, setActiveTab] = useState('home');
+  const [selectedSession, setSelectedSession] = useState(null);
+  const weekKey = getWeekKey();
+
+  const [weekData, setWeekDataState] = useState(() => {
+    if (!profile) return {};
+    return getStorage(`fitness_${profile?.id}_week_${weekKey}`, {});
+  });
+
+  const [allHistory, setAllHistory] = useState(() => {
+    if (!profile) return {};
+    const hist = {};
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith(`fitness_${profile?.id}_week_`)) {
+          hist[k] = JSON.parse(localStorage.getItem(k));
+        }
+      });
+    } catch {}
+    return hist;
+  });
+
+  const setWeekData = (data) => {
+    setWeekDataState(data);
+    setAllHistory(prev => ({ ...prev, [`fitness_${profile.id}_week_${weekKey}`]: data }));
+  };
+
+  const handleSelectProfile = (p) => {
+    setStorage('fitness_profile', p);
+    setProfile(p);
+    const w = getStorage(`fitness_${p.id}_week_${weekKey}`, {});
+    setWeekDataState(w);
+    const hist = {};
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith(`fitness_${p.id}_week_`)) hist[k] = JSON.parse(localStorage.getItem(k));
+      });
+    } catch {}
+    setAllHistory(hist);
+  };
+
+  const handleStartSession = (sessionKey) => {
+    setSelectedSession(sessionKey);
+    setActiveTab('session');
+  };
+
+  if (!profile) return <ProfileSelect onSelect={handleSelectProfile} />;
+
+  const renderScreen = () => {
+    switch (activeTab) {
+      case 'home': return <HomeScreen profile={profile} weekData={weekData} onStartSession={handleStartSession} weekKey={weekKey} />;
+      case 'session': return <SessionScreen profile={profile} weekData={weekData} setWeekData={setWeekData} selectedSession={selectedSession} setSelectedSession={setSelectedSession} />;
+      case 'progress': return <ProgressScreen profile={profile} allHistory={allHistory} />;
+      case 'coach': return <CoachScreen profile={profile} weekData={weekData} allHistory={allHistory} />;
+      default: return null;
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: '480px', margin: '0 auto', minHeight: '100vh', position: 'relative', background: 'var(--bg)' }}>
+      {/* Header bar */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 50, background: 'var(--bg)', borderBottom: '1px solid var(--border)', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontFamily: 'Bebas Neue', fontSize: '18px', letterSpacing: '3px', color: 'var(--accent)' }}>STREET LIFTING</span>
+        <button onClick={() => { setStorage('fitness_profile', null); setProfile(null); }} style={{ background: 'var(--surface2)', border: 'none', borderRadius: '10px', padding: '6px 12px', color: 'var(--muted)', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontSize: '16px' }}>{profile.emoji}</span>
+          <span>{profile.name}</span>
+        </button>
+      </div>
+      <div style={{ overflowY: 'auto', height: 'calc(100vh - 57px)' }}>
+        {renderScreen()}
+      </div>
+      <BottomNav active={activeTab} onChange={(t) => { setActiveTab(t); if (t !== 'session') setSelectedSession(null); }} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
